@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "collect": "node scripts/collect.mjs"
+    "collect": "node scripts/collect.mjs",
+    "extract": "node scripts/extract.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
