@@ -9,15 +9,18 @@
     "lint": "eslint",
     "collect": "node scripts/collect.mjs",
     "extract": "node scripts/extract.mjs",
-    "digest": "node scripts/send-digest.mjs"
+    "digest": "node scripts/send-digest.mjs",
+    "sync-sheet": "node scripts/sync-sheet.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.116.0",
     "cheerio": "^1.2.0",
+    "googleapis": "^182.0.0",
     "next": "^16.3.8",
     "nodemailer": "^10.0.13",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "rss-parser": "^3.13.0",
     "server-only": "^0.0.1"
   },
   "devDependencies": {

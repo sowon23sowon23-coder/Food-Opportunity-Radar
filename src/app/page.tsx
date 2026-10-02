@@ -7,7 +7,7 @@ type RawContentRow = {
   id: string;
   title: string | null;
   url: string;
-  content_type: "html_snapshot" | "youtube_video";
+  content_type: "html_snapshot" | "youtube_video" | "rss_article";
   content_text: string | null;
   published_at: string | null;
   fetched_at: string;
@@ -22,6 +22,7 @@ type InsightRow = {
   id: string;
   trend_signal: string | null;
   evidence: string | null;
+  brands: string[];
   ingredients: string[];
   products: string[];
   flavors: string[];
@@ -76,7 +77,7 @@ export default async function Home() {
     supabaseAdmin
       .from("content_insights")
       .select(
-        `id, trend_signal, evidence, ingredients, products, flavors, campaign_type, promotion_type, confidence, created_at,
+        `id, trend_signal, evidence, brands, ingredients, products, flavors, campaign_type, promotion_type, confidence, created_at,
          raw_contents ( title, url, sources ( brands ( name ) ) )`
       )
       .eq("has_signal", true)
@@ -113,7 +114,7 @@ export default async function Home() {
               >
                 <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
                   <span className="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                    {insight.raw_contents?.sources?.brands?.name ?? "Unknown brand"}
+                    {insight.raw_contents?.sources?.brands?.name ?? insight.brands?.[0] ?? "F&B 뉴스"}
                   </span>
                   {insight.confidence !== null && <span>신뢰도 {Math.round(insight.confidence * 100)}%</span>}
                   <span>{formatDate(insight.created_at)}</span>
@@ -170,7 +171,7 @@ export default async function Home() {
               >
                 <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
                   <span className="rounded-full bg-zinc-100 px-2 py-0.5 font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                    {row.sources?.brands?.name ?? "Unknown brand"}
+                    {row.sources?.brands?.name ?? "F&B 뉴스"}
                   </span>
                   <span className="rounded-full bg-zinc-100 px-2 py-0.5 dark:bg-zinc-800">
                     {row.sources?.source_type ?? row.content_type}

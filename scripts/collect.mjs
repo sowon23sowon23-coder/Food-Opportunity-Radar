@@ -2,6 +2,31 @@ import { readFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import * as cheerio from "cheerio";
 import { createClient } from "@supabase/supabase-js";
+import Parser from "rss-parser";
+
+const rssParser = new Parser();
+
+// General F&B trade press covers everything; only keep articles that are
+// actually relevant to our tracked brands or category.
+const RELEVANCE_KEYWORDS = [
+  "menchie",
+  "pinkberry",
+  "sweetfrog",
+  "sweet frog",
+  "tcby",
+  "16 handles",
+  "red mango",
+  "yogurtland",
+  "frozen yogurt",
+  "froyo",
+  "fro-yo",
+  "soft serve",
+];
+
+function isRelevant(text) {
+  const lower = text.toLowerCase();
+  return RELEVANCE_KEYWORDS.some((kw) => lower.includes(kw));
+}
 
 // Local dev convenience: load .env.local if present. In CI, real env vars
 // are already injected by the workflow, so this is a no-op there.
@@ -99,6 +124,40 @@ async function collectYoutube(source) {
   return { inserted, reason: inserted > 0 ? "new videos" : "no new videos" };
 }
 
+async function collectRss(source) {
+  const feed = await rssParser.parseURL(source.url);
+  const items = (feed.items ?? []).slice(0, 30);
+
+  let inserted = 0;
+  let skipped = 0;
+  for (const item of items) {
+    const title = item.title ?? "";
+    const snippet = item.contentSnippet ?? item.content ?? "";
+    if (!isRelevant(`${title} ${snippet}`)) {
+      skipped++;
+      continue;
+    }
+
+    const url = item.link;
+    if (!url) continue;
+    const text = `${title}\n\n${snippet}`.trim();
+
+    const { error } = await supabase.from("raw_contents").insert({
+      source_id: source.id,
+      content_type: "rss_article",
+      title,
+      url,
+      content_text: text.slice(0, 20000),
+      content_hash: hash(text),
+      published_at: item.isoDate ?? null,
+    });
+    // Unique index on url makes re-inserting an already-seen article a no-op.
+    if (error && error.code !== "23505") throw new Error(error.message);
+    if (!error) inserted++;
+  }
+  return { inserted, reason: `${inserted} relevant, ${skipped} filtered out` };
+}
+
 async function main() {
   const { data: sources, error } = await supabase.from("sources").select("*").eq("is_active", true);
   if (error) throw new Error(`failed to load sources: ${error.message}`);
@@ -112,7 +171,11 @@ async function main() {
   for (const source of sources) {
     try {
       const result =
-        source.collection_method === "youtube_api" ? await collectYoutube(source) : await collectHtml(source);
+        source.collection_method === "youtube_api"
+          ? await collectYoutube(source)
+          : source.collection_method === "rss"
+            ? await collectRss(source)
+            : await collectHtml(source);
       totalInserted += result.inserted;
       console.log(`OK   ${source.url} — ${result.reason} (+${result.inserted})`);
       await supabase
