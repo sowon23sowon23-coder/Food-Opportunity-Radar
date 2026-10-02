@@ -36,11 +36,13 @@ const RESPONSE_SCHEMA = {
   required: ["has_signal", "brands", "ingredients", "products", "flavors", "consumer_needs", "campaign_type", "promotion_type", "trend_signal", "evidence", "confidence"],
 };
 
-const SYSTEM_PROMPT = `You extract structured F&B marketing trend signals from a single piece of collected content (a brand website snapshot, press release, or YouTube video description) for a frozen yogurt competitor-monitoring dashboard.
+const SYSTEM_PROMPT = `You extract structured F&B marketing trend signals from collected content (a brand website snapshot, press release, or YouTube video description) for a frozen yogurt competitor-monitoring dashboard.
 
 Only report a signal if the text describes something concrete and specific — a new flavor, ingredient, product, marketing campaign, promotion, or brand partnership. Generic navigation menus, boilerplate "welcome to our site" text, or unchanged evergreen copy should get has_signal: false and empty arrays/strings.
 
-Never invent information not present in the text. evidence must be a direct quote or close paraphrase of the source text, not a guess.`;
+You will sometimes receive a PREVIOUS VERSION and a CURRENT VERSION of the same page instead of a single piece of content. When both are given: only report what is new or changed in the CURRENT VERSION. Ignore anything (flavors, promotions, partnerships, etc.) that was already present in the PREVIOUS VERSION — it has already been reported. If nothing in the CURRENT VERSION is new compared to the PREVIOUS VERSION, set has_signal to false even if the page still describes real promotions.
+
+Never invent information not present in the text. evidence must be a direct quote or close paraphrase of the CURRENT VERSION, not a guess.`;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -54,7 +56,7 @@ async function callGemini(text) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{ parts: [{ text: text.slice(0, 6000) }] }],
+        contents: [{ parts: [{ text: text.slice(0, 11000) }] }],
         generationConfig: {
           responseMimeType: "application/json",
           responseSchema: RESPONSE_SCHEMA,
@@ -94,7 +96,7 @@ async function main() {
 
   const { data: contents, error: e2 } = await supabase
     .from("raw_contents")
-    .select("id, title, content_text")
+    .select("id, title, content_text, content_type, source_id, fetched_at")
     .order("fetched_at", { ascending: false });
   if (e2) throw new Error(`failed to load raw_contents: ${e2.message}`);
 
@@ -107,7 +109,29 @@ async function main() {
 
   for (const row of pending) {
     try {
-      const text = `${row.title ?? ""}\n\n${row.content_text ?? ""}`;
+      let text = `${row.title ?? ""}\n\n${row.content_text ?? ""}`;
+
+      // html_snapshot sources (homepages, press pages) re-describe everything
+      // still on the page every time, not just what's new. Diff against the
+      // previous snapshot of the same source so we only report real changes.
+      if (row.content_type === "html_snapshot") {
+        const { data: previous } = await supabase
+          .from("raw_contents")
+          .select("content_text")
+          .eq("source_id", row.source_id)
+          .eq("content_type", "html_snapshot")
+          .lt("fetched_at", row.fetched_at)
+          .order("fetched_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (previous?.content_text) {
+          const prevSnippet = previous.content_text.slice(0, 4000);
+          const currSnippet = (row.content_text ?? "").slice(0, 6000);
+          text = `PREVIOUS VERSION:\n${prevSnippet}\n\nCURRENT VERSION:\n${row.title ?? ""}\n\n${currSnippet}`;
+        }
+      }
+
       const result = await extractOne(text);
 
       const { error } = await supabase.from("content_insights").insert({
