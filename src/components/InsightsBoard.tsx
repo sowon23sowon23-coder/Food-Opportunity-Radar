@@ -92,6 +92,14 @@ export default function InsightsBoard({ insights }: { insights: InsightItem[] })
         ))}
       </div>
 
+      <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500 dark:text-zinc-400">
+        {STAGES.map((stage) => (
+          <span key={stage.key}>
+            <span className="font-medium text-zinc-600 dark:text-zinc-300">{stage.label}</span> · {stage.desc}
+          </span>
+        ))}
+      </p>
+
       <ul className="mt-5 flex flex-col gap-4">
         {filtered.map((item) => (
           <li
