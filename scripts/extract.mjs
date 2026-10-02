@@ -32,8 +32,36 @@ const RESPONSE_SCHEMA = {
     trend_signal: { type: "string", description: "One sentence describing what changed or what's new. Empty string if has_signal is false." },
     evidence: { type: "string", description: "The exact sentence(s) from the source text that support trend_signal. Empty string if has_signal is false." },
     confidence: { type: "number", description: "0 to 1" },
+    yogurtland_fit: {
+      type: "string",
+      enum: ["explore", "validate", "test", "hold", "reject", "n/a"],
+      description: "Draft applicability of this signal to Yogurtland (a US self-serve frozen yogurt chain), for a human to review — not a final decision. explore: worth researching further. validate: worth checking customer/SNS reaction first. test: concrete enough to pilot in a few stores. hold: noted but not a priority now. reject: doesn't fit Yogurtland's brand/operations. Use 'n/a' when has_signal is false.",
+    },
+    yogurtland_idea: {
+      type: "string",
+      description: "One concrete, concise suggestion for how Yogurtland could act on this (a flavor/topping idea, content angle, or promotion format) — grounded only in what the signal actually describes. Empty string if has_signal is false.",
+    },
+    yogurtland_reasoning: {
+      type: "string",
+      description: "One or two sentences on why this fit level was chosen — brand/customer/operational fit. Never invent market size, sales, or probability-of-success numbers. Empty string if has_signal is false.",
+    },
   },
-  required: ["has_signal", "brands", "ingredients", "products", "flavors", "consumer_needs", "campaign_type", "promotion_type", "trend_signal", "evidence", "confidence"],
+  required: [
+    "has_signal",
+    "brands",
+    "ingredients",
+    "products",
+    "flavors",
+    "consumer_needs",
+    "campaign_type",
+    "promotion_type",
+    "trend_signal",
+    "evidence",
+    "confidence",
+    "yogurtland_fit",
+    "yogurtland_idea",
+    "yogurtland_reasoning",
+  ],
 };
 
 const SYSTEM_PROMPT = `You extract structured F&B marketing trend signals from collected content (a brand website snapshot, press release, or YouTube video description) for a frozen yogurt competitor-monitoring dashboard.
@@ -42,7 +70,9 @@ Only report a signal if the text describes something concrete and specific — a
 
 You will sometimes receive a PREVIOUS VERSION and a CURRENT VERSION of the same page instead of a single piece of content. When both are given: only report what is new or changed in the CURRENT VERSION. Ignore anything (flavors, promotions, partnerships, etc.) that was already present in the PREVIOUS VERSION — it has already been reported. If nothing in the CURRENT VERSION is new compared to the PREVIOUS VERSION, set has_signal to false even if the page still describes real promotions.
 
-Never invent information not present in the text. evidence must be a direct quote or close paraphrase of the CURRENT VERSION, not a guess.`;
+Never invent information not present in the text. evidence must be a direct quote or close paraphrase of the CURRENT VERSION, not a guess.
+
+When has_signal is true, also draft a Yogurtland applicability assessment (yogurtland_fit, yogurtland_idea, yogurtland_reasoning). Yogurtland is a US self-serve frozen yogurt chain (customize-your-own cup, pay by weight, wide topping bar) — judge fit against that specific format, not frozen desserts in general. This is a first-pass draft for a human marketer to review and override, not a final decision. Never invent market size, sales figures, or success probabilities — reasoning must stay qualitative.`;
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -147,6 +177,9 @@ async function main() {
         trend_signal: result.trend_signal || null,
         evidence: result.evidence || null,
         confidence: result.confidence ?? null,
+        yogurtland_fit: result.yogurtland_fit === "n/a" ? null : result.yogurtland_fit,
+        yogurtland_idea: result.yogurtland_idea || null,
+        yogurtland_reasoning: result.yogurtland_reasoning || null,
         model: GEMINI_MODEL,
       });
       if (error) throw new Error(error.message);
