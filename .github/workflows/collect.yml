@@ -2,7 +2,7 @@ name: Collect sources
 
 on:
   schedule:
-    - cron: "0 8 * * *" # daily, 08:00 UTC
+    - cron: "17 23 * * *" # daily, 23:17 UTC (~08:17 KST) — off-peak minute to avoid queueing delay at :00
   workflow_dispatch: {}
 
 jobs:
