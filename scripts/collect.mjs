@@ -72,6 +72,12 @@ async function collectHtml(source) {
     return { inserted: 0, reason: "unchanged" };
   }
 
+  // Industry-wide sources (no single owning brand) cover far more than F&B —
+  // only store a snapshot if our brands/category actually appear on it.
+  if (!source.brand_id && !isRelevant(text)) {
+    return { inserted: 0, reason: "changed but not relevant" };
+  }
+
   const { error } = await supabase.from("raw_contents").insert({
     source_id: source.id,
     content_type: "html_snapshot",
