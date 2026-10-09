@@ -142,19 +142,19 @@ async function extractOne(text, retries = 3) {
 async function main() {
   if (!GEMINI_KEY) throw new Error("GEMINI_API_KEY not set");
 
-  const { data: processed, error: e1 } = await supabase.from("content_insights").select("raw_content_id");
-  if (e1) throw new Error(`failed to load processed ids: ${e1.message}`);
-  const processedIds = new Set((processed ?? []).map((r) => r.raw_content_id));
+  // The view (migration 0011) does the "not yet analyzed" diff in the database,
+  // so this stays correct past PostgREST's 1000-row response cap. One run can't
+  // analyze more than the daily AI quota anyway; anything beyond the first page
+  // is picked up by later runs.
+  const { data: contents, count: pendingTotal, error } = await supabase
+    .from("pending_raw_contents")
+    .select("id, title, url, content_text, content_type, source_id, published_at, fetched_at", { count: "exact" })
+    .order("fetched_at", { ascending: false })
+    .limit(1000);
+  if (error) throw new Error(`failed to load pending rows: ${error.message}`);
+  const pending = contents ?? [];
 
-  const { data: contents, error: e2 } = await supabase
-    .from("raw_contents")
-    .select("id, title, url, content_text, content_type, source_id, published_at, fetched_at")
-    .order("fetched_at", { ascending: false });
-  if (e2) throw new Error(`failed to load raw_contents: ${e2.message}`);
-
-  const pending = (contents ?? []).filter((c) => !processedIds.has(c.id) && (c.content_text ?? "").trim().length > 20);
-
-  console.log(`Extracting insights from ${pending.length} new content row(s) (models: ${GEMINI_MODELS.join(" → ")})...\n`);
+  console.log(`Extracting insights from ${pendingTotal} pending content row(s) (models: ${GEMINI_MODELS.join(" → ")})...\n`);
 
   let signalCount = 0;
   let failed = 0;
@@ -231,7 +231,7 @@ async function main() {
     await sleep(12000);
   }
 
-  const remaining = pending.length - analyzed;
+  const remaining = (pendingTotal ?? pending.length) - analyzed;
   if (quotaStop) {
     const wait = quotaStop.retryAfterSeconds ? ` (resets in ~${Math.ceil(quotaStop.retryAfterSeconds / 3600)}h)` : "";
     // ::warning:: shows up as an annotation on the GitHub Actions run summary.
@@ -241,7 +241,7 @@ async function main() {
     console.log(`  ${quotaStop.message.split("\n").find((l) => /Quota exceeded/i.test(l)) ?? quotaStop.message.split("\n")[0]}`);
   }
   console.log(
-    `\nDone. ${analyzed} analyzed (${signalCount} signal(s)), ${failed} failed, ${remaining} left for the next run (incl. failed), out of ${pending.length} pending.`
+    `\nDone. ${analyzed} analyzed (${signalCount} signal(s)), ${failed} failed, ${remaining} left for the next run (incl. failed), out of ${pendingTotal ?? pending.length} pending.`
   );
 }
 
