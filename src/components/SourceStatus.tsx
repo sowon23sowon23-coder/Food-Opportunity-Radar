@@ -58,18 +58,35 @@ export default function SourceStatus({
   const sorted = [...items].sort(
     (a, b) => HEALTH_ORDER.indexOf(a.health) - HEALTH_ORDER.indexOf(b.health) || a.name.localeCompare(b.name)
   );
-  const needsAttention = counts.error + counts.stale > 0;
+  // Overall state shown on the compact header button: worst problem wins.
+  const overall: SourceHealth = counts.error > 0 ? "error" : counts.stale > 0 ? "stale" : "ok";
+  const dot = { error: "bg-rose-500", stale: "bg-amber-500", ok: "bg-emerald-500" }[overall as "error" | "stale" | "ok"];
+  const headline =
+    overall === "error" ? `오류 ${counts.error}` : overall === "stale" ? `지연 ${counts.stale}` : "정상";
 
   return (
-    <details className="mt-10 group" open={needsAttention}>
-      <summary className="cursor-pointer list-none text-lg font-semibold text-black marker:content-none dark:text-zinc-50">
-        <span className="inline-flex items-center gap-1.5">
-          수집 상태
-          <span className="text-xs font-normal text-zinc-400 group-open:hidden">(펼치기)</span>
+    // Header dropdown: the summary is a small status button; the panel opens below it.
+    <details className="group relative shrink-0">
+      <summary
+        className={`flex cursor-pointer list-none items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium marker:content-none [&::-webkit-details-marker]:hidden ${
+          overall === "ok"
+            ? "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
+            : HEALTH_STYLE[overall]
+        }`}
+      >
+        <span className={`h-2 w-2 rounded-full ${dot}`} aria-hidden />
+        <span>
+          <span className="hidden sm:inline">수집 상태: </span>
+          {headline}
+        </span>
+        {pendingTotal > 0 && <span className="hidden text-zinc-500 sm:inline dark:text-zinc-400">· 분석 대기 {pendingTotal}</span>}
+        <span className="text-zinc-400 transition-transform group-open:rotate-180" aria-hidden>
+          ▾
         </span>
       </summary>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+      <div className="absolute right-0 z-20 mt-2 max-h-[70vh] w-[calc(100vw-3rem)] max-w-xl overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-4 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
         <span>마지막 수집: {lastRunAt ? formatDateTime(lastRunAt) : "—"}</span>
         <span className="text-zinc-300 dark:text-zinc-700">·</span>
         {HEALTH_ORDER.filter((h) => counts[h] > 0).map((h) => (
@@ -115,6 +132,7 @@ export default function SourceStatus({
           </li>
         ))}
       </ul>
+      </div>
     </details>
   );
 }

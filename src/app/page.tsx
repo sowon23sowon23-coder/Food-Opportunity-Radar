@@ -188,10 +188,21 @@ export default async function Home() {
   return (
     <div className="min-h-screen bg-zinc-50 px-6 py-10 font-sans dark:bg-black sm:px-12">
       <div className="mx-auto max-w-4xl">
-        <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Food Opportunity Radar</h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          경쟁사 공개 채널을 매일 관찰해 요거트랜드 적용 아이디어로 정리합니다
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Food Opportunity Radar</h1>
+            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+              경쟁사 공개 채널을 매일 관찰해 요거트랜드 적용 아이디어로 정리합니다
+            </p>
+          </div>
+          {sourceError ? (
+            <p className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-400">
+              수집 상태 불러오기 실패
+            </p>
+          ) : (
+            <SourceStatus items={sourceItems} lastRunAt={lastRunAt} pendingTotal={pendingTotal} />
+          )}
+        </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="추적 브랜드" value={brandCount ?? "—"} />
@@ -214,14 +225,6 @@ export default async function Home() {
             </p>
           )}
         </section>
-
-        {sourceError ? (
-          <p className="mt-10 text-sm text-red-600 dark:text-red-400">
-            수집 상태를 불러오지 못했습니다: {sourceError.message}
-          </p>
-        ) : (
-          <SourceStatus items={sourceItems} lastRunAt={lastRunAt} pendingTotal={pendingTotal} />
-        )}
 
         <details className="mt-10 group">
           <summary className="cursor-pointer list-none text-lg font-semibold text-black marker:content-none dark:text-zinc-50">
