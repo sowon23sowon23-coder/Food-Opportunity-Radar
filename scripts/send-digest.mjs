@@ -19,9 +19,17 @@ function escapeHtml(s) {
 }
 
 function renderHtml(rows) {
+  if (rows.length === 0) {
+    return `<html><body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+      <h2 style="color:#111;">Food Opportunity Radar — 오늘의 인사이트</h2>
+      <p style="color:#555;font-size:15px;">오늘은 새로 발견된 신호가 없습니다.</p>
+      <p style="margin-top:20px;"><a href="https://food-opportunity-radar-3fzc.vercel.app" style="font-size:13px;color:#666;">전체 대시보드 보기 →</a></p>
+    </body></html>`;
+  }
+
   const items = rows
     .map((r) => {
-      const brand = r.raw_contents?.sources?.brands?.name ?? "Unknown brand";
+      const brand = r.raw_contents?.sources?.brands?.name ?? r.brands?.[0] ?? "F&B 뉴스";
       const url = r.raw_contents?.url ?? "#";
       const tags = [...(r.ingredients ?? []), ...(r.campaign_type ?? []), ...(r.promotion_type ?? [])];
       return `
@@ -52,7 +60,7 @@ async function main() {
   const { data, error } = await supabase
     .from("content_insights")
     .select(
-      `id, trend_signal, evidence, ingredients, campaign_type, promotion_type, confidence,
+      `id, trend_signal, evidence, brands, ingredients, campaign_type, promotion_type, confidence,
        raw_contents ( url, sources ( brands ( name ) ) )`
     )
     .eq("has_signal", true)
@@ -61,33 +69,37 @@ async function main() {
 
   if (error) throw new Error(`failed to load insights: ${error.message}`);
 
-  if (!data || data.length === 0) {
-    console.log("No new insights to email. Skipping send.");
-    return;
-  }
+  const rows = data ?? [];
 
   const transporter = nodemailer.createTransport({
     service: "gmail",
     auth: { user: process.env.EMAIL_FROM, pass: process.env.EMAIL_APP_PASSWORD },
   });
 
+  const subject =
+    rows.length > 0
+      ? `[Food Opportunity Radar] 새 인사이트 ${rows.length}건 — ${new Date().toLocaleDateString("ko-KR")}`
+      : `[Food Opportunity Radar] 오늘은 새 소식 없음 — ${new Date().toLocaleDateString("ko-KR")}`;
+
   await transporter.sendMail({
     from: process.env.EMAIL_FROM,
     to: process.env.EMAIL_TO,
-    subject: `[Food Opportunity Radar] 새 인사이트 ${data.length}건 — ${new Date().toLocaleDateString("ko-KR")}`,
-    html: renderHtml(data),
+    subject,
+    html: renderHtml(rows),
   });
 
-  const { error: updateError } = await supabase
-    .from("content_insights")
-    .update({ emailed_at: new Date().toISOString() })
-    .in(
-      "id",
-      data.map((r) => r.id)
-    );
-  if (updateError) throw new Error(`sent email but failed to mark as emailed: ${updateError.message}`);
+  if (rows.length > 0) {
+    const { error: updateError } = await supabase
+      .from("content_insights")
+      .update({ emailed_at: new Date().toISOString() })
+      .in(
+        "id",
+        rows.map((r) => r.id)
+      );
+    if (updateError) throw new Error(`sent email but failed to mark as emailed: ${updateError.message}`);
+  }
 
-  console.log(`Sent digest with ${data.length} insight(s) to ${process.env.EMAIL_TO}.`);
+  console.log(`Sent digest with ${rows.length} insight(s) to ${process.env.EMAIL_TO}.`);
 }
 
 main();
