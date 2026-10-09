@@ -13,7 +13,14 @@ if (existsSync(".env.local")) {
 }
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+// Models are tried in order: when one hits its daily free quota (each model
+// has its own), the run continues on the next. GEMINI_MODEL alone still works
+// as a single-model override.
+const GEMINI_MODELS = (process.env.GEMINI_MODELS || process.env.GEMINI_MODEL || "gemini-3.6-flash,gemini-3.7-flash,gemini-3.5-flash-lite")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+let modelIndex = 0;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
 const RESPONSE_SCHEMA = {
@@ -81,9 +88,9 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function callGemini(text) {
+async function callGemini(text, model) {
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -106,14 +113,23 @@ async function callGemini(text) {
   return JSON.parse(raw);
 }
 
-// Retries only short-lived errors. quota_exhausted (e.g. the free tier's daily
-// request cap) is thrown straight up so main() can stop the run — retrying
-// just burns time and more requests until the quota resets.
+// Retries only short-lived errors on the same model. quota_exhausted (e.g. the
+// free tier's daily request cap) or an unavailable model switches to the next
+// model in GEMINI_MODELS; once every model is used up the error is thrown so
+// main() can stop the run instead of burning time until the quota resets.
 async function extractOne(text, retries = 3) {
   for (let attempt = 1; ; attempt++) {
+    const model = GEMINI_MODELS[modelIndex];
     try {
-      return await callGemini(text);
+      return { result: await callGemini(text, model), model };
     } catch (err) {
+      if (err.kind === "quota_exhausted" || err.kind === "model_unavailable") {
+        if (modelIndex + 1 >= GEMINI_MODELS.length) throw err;
+        modelIndex++;
+        attempt = 0;
+        console.log(`  ${model}: ${err.kind} — switching to ${GEMINI_MODELS[modelIndex]}`);
+        continue;
+      }
       const retryable = err.kind === "overloaded" || err.kind === "rate_limited";
       if (!retryable || attempt > retries) throw err;
       const backoff = err.kind === "rate_limited" ? Math.ceil(err.retryAfterSeconds + 1) * 1000 : attempt * 15000;
@@ -138,7 +154,7 @@ async function main() {
 
   const pending = (contents ?? []).filter((c) => !processedIds.has(c.id) && (c.content_text ?? "").trim().length > 20);
 
-  console.log(`Extracting insights from ${pending.length} new content row(s)...\n`);
+  console.log(`Extracting insights from ${pending.length} new content row(s) (models: ${GEMINI_MODELS.join(" → ")})...\n`);
 
   let signalCount = 0;
   let failed = 0;
@@ -178,7 +194,7 @@ async function main() {
         }
       }
 
-      const result = await extractOne(text);
+      const { result, model } = await extractOne(text);
 
       const { error } = await supabase.from("content_insights").insert({
         raw_content_id: row.id,
@@ -196,7 +212,7 @@ async function main() {
         yogurtland_fit: result.yogurtland_fit === "n/a" ? null : result.yogurtland_fit,
         yogurtland_idea: result.yogurtland_idea || null,
         yogurtland_reasoning: result.yogurtland_reasoning || null,
-        model: GEMINI_MODEL,
+        model,
       });
       if (error) throw new Error(error.message);
 
@@ -220,7 +236,7 @@ async function main() {
     const wait = quotaStop.retryAfterSeconds ? ` (resets in ~${Math.ceil(quotaStop.retryAfterSeconds / 3600)}h)` : "";
     // ::warning:: shows up as an annotation on the GitHub Actions run summary.
     console.log(
-      `\n::warning::Gemini quota exhausted${wait} — stopped early. ${remaining} row(s) left unanalyzed; they will be processed on the next run.`
+      `\n::warning::Gemini quota exhausted on all models${wait} — stopped early. ${remaining} row(s) left unanalyzed; they will be processed on the next run.`
     );
     console.log(`  ${quotaStop.message.split("\n").find((l) => /Quota exceeded/i.test(l)) ?? quotaStop.message.split("\n")[0]}`);
   }

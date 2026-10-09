@@ -7,7 +7,7 @@
 const MAX_WAIT_SECONDS = 90;
 
 export class GeminiError extends Error {
-  // kind: quota_exhausted | rate_limited | overloaded | other
+  // kind: quota_exhausted | rate_limited | model_unavailable | overloaded | other
   constructor(kind, message, { retryAfterSeconds = null } = {}) {
     super(message);
     this.name = "GeminiError";
@@ -43,6 +43,10 @@ export function classifyGeminiError(status, body) {
       return new GeminiError("quota_exhausted", message, { retryAfterSeconds });
     }
     return new GeminiError("rate_limited", message, { retryAfterSeconds });
+  }
+  // Retired or unknown model name (e.g. "no longer available to new users").
+  if (status === 404) {
+    return new GeminiError("model_unavailable", message);
   }
   if (status === 503 || status === 500 || /high demand|overloaded/i.test(message)) {
     return new GeminiError("overloaded", message);

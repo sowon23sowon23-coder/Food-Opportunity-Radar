@@ -57,6 +57,11 @@ test("503 high demand → overloaded (retry with backoff)", () => {
   assert.equal(e.kind, "overloaded");
 });
 
+test("404 retired model → model_unavailable (switch to the next model)", () => {
+  const e = classifyGeminiError(404, { error: { code: 404, message: "This model models/gemini-2.5-flash is no longer available to new users." } });
+  assert.equal(e.kind, "model_unavailable");
+});
+
 test("other errors are not retried", () => {
   assert.equal(classifyGeminiError(400, { error: { message: "Invalid argument" } }).kind, "other");
 });
