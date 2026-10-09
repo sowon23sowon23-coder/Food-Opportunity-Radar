@@ -27,7 +27,7 @@ AI가 각 신호에 다음 중 하나를 초안으로 매기고, 실행 아이�
 
 - **경쟁 브랜드**: Menchie's, Pinkberry, sweetFrog, TCBY, 16 Handles, Red Mango, Yochi(호주), Go Greek Yogurt, Mimi's(NYC)
 - **업계 뉴스**: Nation's Restaurant News, Restaurant Dive, Food Dive, Nosh, The Spoon, Modern Restaurant Management, FoodNavigator, National Restaurant Association, Placer.ai 등
-- **Instagram**: @iloveyochi.us
+- **Instagram**: @iloveyochi.us, @mimis.ny, @gogreekyogurt
 
 브랜드와 수집 소스는 Supabase의 `brands`, `sources` 테이블로 관리합니다. 새로 추가할 때는 [supabase/migrations/](supabase/migrations/)에 마이그레이션을 추가하세요.
 

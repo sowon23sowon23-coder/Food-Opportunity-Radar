@@ -24,9 +24,17 @@ alter table raw_contents add column external_id text;
 create unique index raw_contents_instagram_external_id_idx on raw_contents(external_id)
   where content_type = 'instagram_post';
 
--- First tracked account. Linked to the existing Yochi brand — change brand_id
--- if this account turns out to belong to a different brand.
+-- Tracked accounts, each linked to an existing brand. iloveyochi.us is linked
+-- to Yochi — change brand_id if it turns out to belong to a different brand.
 insert into sources (brand_id, source_type, url, identifier, collection_method, is_active, notes)
 select id, 'instagram_account', 'https://www.instagram.com/iloveyochi.us/', 'iloveyochi.us', 'instagram_graph', true,
        'Instagram Business Discovery; identifier = username'
-from brands where name = 'Yochi';
+from brands where name = 'Yochi'
+union all
+select id, 'instagram_account', 'https://www.instagram.com/mimis.ny/', 'mimis.ny', 'instagram_graph', true,
+       'Instagram Business Discovery; identifier = username'
+from brands where name = 'Mimi''s'
+union all
+select id, 'instagram_account', 'https://www.instagram.com/gogreekyogurt/', 'gogreekyogurt', 'instagram_graph', true,
+       'Instagram Business Discovery; identifier = username'
+from brands where name = 'Go Greek Yogurt';
