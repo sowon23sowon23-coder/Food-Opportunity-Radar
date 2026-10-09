@@ -83,7 +83,9 @@ async function main() {
 
   await transporter.sendMail({
     from: process.env.EMAIL_FROM,
-    to: process.env.EMAIL_TO,
+    // Recipients go in BCC so they don't see each other's addresses; EMAIL_TO may be comma-separated.
+    to: process.env.EMAIL_FROM,
+    bcc: process.env.EMAIL_TO,
     subject,
     html: renderHtml(rows),
   });

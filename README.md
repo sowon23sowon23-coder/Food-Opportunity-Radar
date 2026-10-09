@@ -61,7 +61,7 @@ Next.js · React · Tailwind CSS · Supabase(Postgres) · Gemini API · YouTube 
 2. `.env.local.example`을 `.env.local`로 복사하고 값을 채웁니다.
    - Supabase: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
    - `YOUTUBE_API_KEY`, `GEMINI_API_KEY`
-   - 이메일: `EMAIL_FROM`, `EMAIL_APP_PASSWORD`, `EMAIL_TO`
+   - 이메일: `EMAIL_FROM`, `EMAIL_APP_PASSWORD`, `EMAIL_TO` (여러 명이면 쉼표로 구분, 숨은참조로 발송)
    - 시트 동기화: `GOOGLE_SHEET_ID`, 그리고 프로젝트 루트의 `google-service-account.json`(서비스 계정 키)
 
 3. Supabase SQL Editor에서 [supabase/migrations/](supabase/migrations/)의 파일을 번호 순서대로 실행합니다.
