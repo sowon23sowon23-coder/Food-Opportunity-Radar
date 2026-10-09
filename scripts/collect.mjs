@@ -7,8 +7,12 @@ import Parser from "rss-parser";
 const rssParser = new Parser();
 
 // General F&B trade press covers everything; only keep articles that are
-// actually relevant to our tracked brands or category.
+// relevant to our tracked brands or the wider frozen dessert / sweet-treat
+// category. Trade headlines rarely say "froyo", so adjacent categories,
+// toppings, and LTO/flavor news are included too — extract.mjs decides
+// whether an article is an actual signal.
 const RELEVANCE_KEYWORDS = [
+  // tracked brands
   "menchie",
   "pinkberry",
   "sweetfrog",
@@ -17,15 +21,44 @@ const RELEVANCE_KEYWORDS = [
   "16 handles",
   "red mango",
   "yogurtland",
+  "yo-chi",
+  "yochi",
+  "go greek",
+  // category
   "frozen yogurt",
   "froyo",
   "fro-yo",
+  "yogurt",
   "soft serve",
+  "soft-serve",
+  "ice cream",
+  "gelato",
+  "frozen dessert",
+  "frozen treat",
+  "dessert",
+  "sundae",
+  "acai",
+  "açaí",
+  "boba",
+  "bubble tea",
+  "topping",
+  // menu / marketing news
+  "flavor",
+  "limited-time",
+  "limited time",
+  "lto",
 ];
 
+// Match whole words (plus plural/possessive/-ed endings) so short keywords
+// don't hit inside other words ("lto" in "Salton", "boba" in "Kaboba").
+// Lookarounds instead of \b because \b doesn't treat "í" in "açaí" as a letter.
+const RELEVANCE_RE = new RegExp(
+  `(?<![\\p{L}\\d])(?:${RELEVANCE_KEYWORDS.map((kw) => kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})(?:s|es|ed|'s|’s)?(?![\\p{L}\\d])`,
+  "iu"
+);
+
 function isRelevant(text) {
-  const lower = text.toLowerCase();
-  return RELEVANCE_KEYWORDS.some((kw) => lower.includes(kw));
+  return RELEVANCE_RE.test(text);
 }
 
 // Local dev convenience: load .env.local if present. In CI, real env vars
