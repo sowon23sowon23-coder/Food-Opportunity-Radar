@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
+import { classifyGeminiError } from "./gemini-errors.mjs";
 
 if (existsSync(".env.local")) {
   for (const line of readFileSync(".env.local", "utf8").split("\n")) {
@@ -97,23 +98,26 @@ async function callGemini(text) {
     }
   );
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw classifyGeminiError(res.status, data);
 
   const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!raw) throw new Error("no content in Gemini response");
   return JSON.parse(raw);
 }
 
-async function extractOne(text, retries = 4) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
+// Retries only short-lived errors. quota_exhausted (e.g. the free tier's daily
+// request cap) is thrown straight up so main() can stop the run — retrying
+// just burns time and more requests until the quota resets.
+async function extractOne(text, retries = 3) {
+  for (let attempt = 1; ; attempt++) {
     try {
       return await callGemini(text);
     } catch (err) {
-      const retryable = /high demand|overloaded|503|429/i.test(err.message);
-      if (!retryable || attempt === retries) throw err;
-      const backoff = attempt * 15000;
-      console.log(`  retry ${attempt}/${retries - 1} after ${backoff / 1000}s — ${err.message}`);
+      const retryable = err.kind === "overloaded" || err.kind === "rate_limited";
+      if (!retryable || attempt > retries) throw err;
+      const backoff = err.kind === "rate_limited" ? Math.ceil(err.retryAfterSeconds + 1) * 1000 : attempt * 15000;
+      console.log(`  retry ${attempt}/${retries} after ${backoff / 1000}s — ${err.message.split("\n")[0]}`);
       await sleep(backoff);
     }
   }
@@ -138,7 +142,11 @@ async function main() {
 
   let signalCount = 0;
   let failed = 0;
+  let analyzed = 0;
+  let quotaStop = null;
 
+  // Rows that fail (or are never reached) get no content_insights row, so the
+  // next run picks them up again automatically.
   for (const row of pending) {
     try {
       let text = `${row.title ?? ""}\n\n${row.content_text ?? ""}`;
@@ -192,17 +200,33 @@ async function main() {
       });
       if (error) throw new Error(error.message);
 
+      analyzed++;
       if (result.has_signal) signalCount++;
       console.log(`OK   ${row.title?.slice(0, 60) ?? row.id} — signal: ${result.has_signal}`);
     } catch (err) {
+      if (err.kind === "quota_exhausted") {
+        quotaStop = err;
+        break;
+      }
       failed++;
-      console.log(`FAIL ${row.title?.slice(0, 60) ?? row.id} — ${err.message}`);
+      console.log(`FAIL ${row.title?.slice(0, 60) ?? row.id} — ${err.message.split("\n")[0]}`);
     }
     // Free tier rate limit safety margin.
     await sleep(12000);
   }
 
-  console.log(`\nDone. ${signalCount} signal(s) found, ${failed} failed, out of ${pending.length} processed.`);
+  const remaining = pending.length - analyzed;
+  if (quotaStop) {
+    const wait = quotaStop.retryAfterSeconds ? ` (resets in ~${Math.ceil(quotaStop.retryAfterSeconds / 3600)}h)` : "";
+    // ::warning:: shows up as an annotation on the GitHub Actions run summary.
+    console.log(
+      `\n::warning::Gemini quota exhausted${wait} — stopped early. ${remaining} row(s) left unanalyzed; they will be processed on the next run.`
+    );
+    console.log(`  ${quotaStop.message.split("\n").find((l) => /Quota exceeded/i.test(l)) ?? quotaStop.message.split("\n")[0]}`);
+  }
+  console.log(
+    `\nDone. ${analyzed} analyzed (${signalCount} signal(s)), ${failed} failed, ${remaining} left for the next run (incl. failed), out of ${pending.length} pending.`
+  );
 }
 
 main();
