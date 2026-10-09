@@ -8,7 +8,7 @@ type RawContentRow = {
   id: string;
   title: string | null;
   url: string;
-  content_type: "html_snapshot" | "youtube_video" | "rss_article";
+  content_type: "html_snapshot" | "youtube_video" | "rss_article" | "instagram_post";
   content_text: string | null;
   published_at: string | null;
   fetched_at: string;

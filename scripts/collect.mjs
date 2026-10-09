@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import * as cheerio from "cheerio";
 import { createClient } from "@supabase/supabase-js";
 import Parser from "rss-parser";
+import { collectInstagramAccount, readConfig as readInstagramConfig, toRawContentRow, redact } from "./instagram.mjs";
 
 const rssParser = new Parser();
 
@@ -197,8 +198,51 @@ async function collectRss(source) {
   return { inserted, reason: `${inserted} relevant, ${skipped} filtered out` };
 }
 
+const instagramTotals = { accounts: 0, fetched: 0, inserted: 0, duplicates: 0, failedAccounts: [] };
+
+async function collectInstagram(source) {
+  // Throws a "config" error (counted as a failed source) if the Meta secrets aren't set.
+  const config = readInstagramConfig();
+  const username = source.identifier;
+
+  const { data: known, error } = await supabase
+    .from("raw_contents")
+    .select("external_id")
+    .eq("source_id", source.id)
+    .eq("content_type", "instagram_post")
+    .order("published_at", { ascending: false })
+    .limit(500);
+  if (error) throw new Error(`failed to load known posts: ${error.message}`);
+
+  const stats = await collectInstagramAccount({
+    username,
+    config,
+    knownIds: new Set((known ?? []).map((r) => r.external_id)),
+    insertPost: async (post) => {
+      const { error } = await supabase.from("raw_contents").insert(toRawContentRow(source.id, post, hash));
+      // Unique index on external_id: a post stored by an earlier run is a no-op.
+      if (error?.code === "23505") return "duplicate";
+      if (error) throw new Error(error.message);
+      return "inserted";
+    },
+    log: (msg) => console.log(msg),
+  });
+
+  instagramTotals.fetched += stats.fetched;
+  instagramTotals.inserted += stats.inserted;
+  instagramTotals.duplicates += stats.duplicates;
+  return {
+    inserted: stats.inserted,
+    reason: `@${username}: ${stats.fetched} fetched, ${stats.inserted} new, ${stats.duplicates} already stored; stopped at ${stats.stoppedAt}`,
+  };
+}
+
 async function main() {
-  const { data: sources, error } = await supabase.from("sources").select("*").eq("is_active", true);
+  // --only=instagram runs just the Instagram sources (manual runs / testing).
+  const only = process.argv.find((a) => a.startsWith("--only="))?.slice("--only=".length);
+  let query = supabase.from("sources").select("*").eq("is_active", true);
+  if (only === "instagram") query = query.eq("collection_method", "instagram_graph");
+  const { data: sources, error } = await query;
   if (error) throw new Error(`failed to load sources: ${error.message}`);
 
   console.log(`Collecting from ${sources.length} active sources...\n`);
@@ -208,13 +252,17 @@ async function main() {
   const now = () => new Date().toISOString();
 
   for (const source of sources) {
+    const isInstagram = source.collection_method === "instagram_graph";
+    if (isInstagram) instagramTotals.accounts++;
     try {
       const result =
         source.collection_method === "youtube_api"
           ? await collectYoutube(source)
           : source.collection_method === "rss"
             ? await collectRss(source)
-            : await collectHtml(source);
+            : isInstagram
+              ? await collectInstagram(source)
+              : await collectHtml(source);
       totalInserted += result.inserted;
       console.log(`OK   ${source.url} — ${result.reason} (+${result.inserted})`);
       await supabase
@@ -223,11 +271,21 @@ async function main() {
         .eq("id", source.id);
     } catch (err) {
       failed++;
-      console.log(`FAIL ${source.url} — ${err.message}`);
-      await supabase.from("sources").update({ last_checked_at: now(), last_error: err.message }).eq("id", source.id);
+      const kind = err.kind ? `[${err.kind}] ` : "";
+      const message = kind + redact(err.message, process.env.META_ACCESS_TOKEN);
+      if (isInstagram) instagramTotals.failedAccounts.push(`@${source.identifier} ${message}`);
+      console.log(`FAIL ${source.url} — ${message}`);
+      await supabase.from("sources").update({ last_checked_at: now(), last_error: message }).eq("id", source.id);
     }
   }
 
+  if (instagramTotals.accounts > 0) {
+    const t = instagramTotals;
+    console.log(
+      `\nInstagram: ${t.accounts} account(s), ${t.fetched} fetched, ${t.inserted} new, ${t.duplicates} already stored, ${t.failedAccounts.length} failed`
+    );
+    for (const f of t.failedAccounts) console.log(`  failed: ${f}`);
+  }
   console.log(`\nDone. ${totalInserted} new content row(s), ${failed} source(s) failed.`);
 }
 

@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "collect": "node scripts/collect.mjs",
+    "collect:instagram": "node scripts/collect.mjs --only=instagram",
+    "test": "node --test \"scripts/*.test.mjs\"",
     "extract": "node scripts/extract.mjs",
     "digest": "node scripts/send-digest.mjs",
     "sync-sheet": "node scripts/sync-sheet.mjs"

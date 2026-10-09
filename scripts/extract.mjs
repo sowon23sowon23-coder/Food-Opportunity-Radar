@@ -20,7 +20,7 @@ const RESPONSE_SCHEMA = {
   properties: {
     has_signal: {
       type: "boolean",
-      description: "true only if this content describes something concrete and new (a product, flavor, campaign, promotion, or partnership). false for generic nav/boilerplate/homepage text with nothing new.",
+      description: "true only if this content describes something concrete and new (a product, flavor, ingredient, campaign, promotion, partnership, or store opening). false for generic nav/boilerplate/homepage text or posts with nothing new.",
     },
     brands: { type: "array", items: { type: "string" } },
     ingredients: { type: "array", items: { type: "string" } },
@@ -64,9 +64,11 @@ const RESPONSE_SCHEMA = {
   ],
 };
 
-const SYSTEM_PROMPT = `You extract structured F&B marketing trend signals from collected content (a brand website snapshot, press release, or YouTube video description) for a frozen yogurt competitor-monitoring dashboard.
+const SYSTEM_PROMPT = `You extract structured F&B marketing trend signals from collected content (a brand website snapshot, press release, news article, YouTube video description, or Instagram post caption) for a frozen yogurt competitor-monitoring dashboard.
 
-Only report a signal if the text describes something concrete and specific — a new flavor, ingredient, product, marketing campaign, promotion, or brand partnership. Generic navigation menus, boilerplate "welcome to our site" text, or unchanged evergreen copy should get has_signal: false and empty arrays/strings.
+Only report a signal if the text describes something concrete and specific — a new flavor, ingredient, product, marketing campaign, promotion, brand partnership, or store opening. Generic navigation menus, boilerplate "welcome to our site" text, or unchanged evergreen copy should get has_signal: false and empty arrays/strings.
+
+For an INSTAGRAM POST, only the caption text is available — you cannot see the image or video. Base everything strictly on the caption: do not guess what the image shows, and do not infer flavors, dates, locations, or prices the caption doesn't state. Hashtags and emoji alone (e.g. "#froyo 🍦") are not a signal. evidence must quote the caption.
 
 You will sometimes receive a PREVIOUS VERSION and a CURRENT VERSION of the same page instead of a single piece of content. When both are given: only report what is new or changed in the CURRENT VERSION. Ignore anything (flavors, promotions, partnerships, etc.) that was already present in the PREVIOUS VERSION — it has already been reported. If nothing in the CURRENT VERSION is new compared to the PREVIOUS VERSION, set has_signal to false even if the page still describes real promotions.
 
@@ -126,7 +128,7 @@ async function main() {
 
   const { data: contents, error: e2 } = await supabase
     .from("raw_contents")
-    .select("id, title, content_text, content_type, source_id, fetched_at")
+    .select("id, title, url, content_text, content_type, source_id, published_at, fetched_at")
     .order("fetched_at", { ascending: false });
   if (e2) throw new Error(`failed to load raw_contents: ${e2.message}`);
 
@@ -140,6 +142,12 @@ async function main() {
   for (const row of pending) {
     try {
       let text = `${row.title ?? ""}\n\n${row.content_text ?? ""}`;
+
+      // Label Instagram captions so the model treats them as caption-only
+      // evidence; the permalink stays on raw_contents.url for the dashboard.
+      if (row.content_type === "instagram_post") {
+        text = `INSTAGRAM POST (${row.title ?? ""}, posted ${row.published_at ?? "unknown date"})\nPermalink: ${row.url}\n\nCAPTION:\n${row.content_text ?? ""}`;
+      }
 
       // html_snapshot sources (homepages, press pages) re-describe everything
       // still on the page every time, not just what's new. Diff against the
