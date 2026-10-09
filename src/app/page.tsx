@@ -1,11 +1,13 @@
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import InsightsBoard, { type InsightItem } from "@/components/InsightsBoard";
+import SourceStatus, { type SourceStatusItem } from "@/components/SourceStatus";
 
 // Always fetch fresh data from Supabase; don't bake a build-time snapshot.
 export const dynamic = "force-dynamic";
 
 type RawContentRow = {
   id: string;
+  source_id: string;
   title: string | null;
   url: string;
   content_type: "html_snapshot" | "youtube_video" | "rss_article" | "instagram_post";
@@ -41,6 +43,47 @@ type InsightRow = {
   } | null;
 };
 
+type SourceRow = {
+  id: string;
+  source_type: string;
+  url: string;
+  identifier: string | null;
+  is_active: boolean;
+  last_checked_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  brands: { name: string } | null;
+};
+
+const SOURCE_TYPE_LABEL: Record<string, string> = {
+  website: "웹사이트",
+  press_page: "보도자료",
+  youtube_channel: "YouTube",
+  news_rss: "업계 뉴스",
+  instagram_account: "Instagram",
+};
+
+// Collection runs daily; no success for 36h means at least one run was missed or failed.
+const STALE_MS = 36 * 60 * 60 * 1000;
+
+function sourceName(s: SourceRow) {
+  if (s.source_type === "instagram_account" && s.identifier) return `@${s.identifier}`;
+  if (s.brands?.name) return s.brands.name;
+  try {
+    return new URL(s.url).hostname.replace(/^www\./, "");
+  } catch {
+    return s.url;
+  }
+}
+
+function sourceHealth(s: SourceRow, now: number): SourceStatusItem["health"] {
+  if (!s.is_active) return "inactive";
+  // A successful run clears last_error, so a non-null value means the latest attempt failed.
+  if (s.last_error) return "error";
+  if (!s.last_success_at) return "unchecked";
+  return now - new Date(s.last_success_at).getTime() > STALE_MS ? "stale" : "ok";
+}
+
 function formatDate(iso: string) {
   return new Date(iso).toLocaleString("ko-KR", {
     year: "numeric",
@@ -61,12 +104,17 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
 }
 
 export default async function Home() {
-  const [{ data: rawData, error: rawError }, { data: insightData, error: insightError }, { count: brandCount }] =
-    await Promise.all([
+  const [
+    { data: rawData, error: rawError },
+    { data: insightData, error: insightError },
+    { count: brandCount },
+    { data: sourceData, error: sourceError },
+    { data: analyzedData },
+  ] = await Promise.all([
       supabaseAdmin
         .from("raw_contents")
         .select(
-          `id, title, url, content_type, content_text, published_at, fetched_at,
+          `id, source_id, title, url, content_type, content_text, published_at, fetched_at,
            sources ( source_type, url, brands ( name ) )`
         )
         .order("fetched_at", { ascending: false })
@@ -82,6 +130,12 @@ export default async function Home() {
         .order("created_at", { ascending: false })
         .returns<InsightRow[]>(),
       supabaseAdmin.from("brands").select("id", { count: "exact", head: true }),
+      supabaseAdmin
+        .from("sources")
+        .select("id, source_type, url, identifier, is_active, last_checked_at, last_success_at, last_error, brands ( name )")
+        .returns<SourceRow[]>(),
+      // Every analyzed row (signal or not) — used to count what's still waiting for analysis.
+      supabaseAdmin.from("content_insights").select("raw_content_id").returns<{ raw_content_id: string }[]>(),
     ]);
 
   const rows = rawData ?? [];
@@ -102,7 +156,32 @@ export default async function Home() {
     sourceUrl: r.raw_contents?.url ?? null,
   }));
 
-  const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+  // Same rule as scripts/extract.mjs: rows with almost no text are never analyzed.
+  const analyzedIds = new Set((analyzedData ?? []).map((r) => r.raw_content_id));
+  const pendingBySource = new Map<string, number>();
+  for (const r of rows) {
+    if (analyzedIds.has(r.id) || (r.content_text ?? "").trim().length <= 20) continue;
+    pendingBySource.set(r.source_id, (pendingBySource.get(r.source_id) ?? 0) + 1);
+  }
+  const sources = sourceData ?? [];
+  const sourceItems: SourceStatusItem[] = sources.map((s) => ({
+    id: s.id,
+    name: sourceName(s),
+    typeLabel: SOURCE_TYPE_LABEL[s.source_type] ?? s.source_type,
+    url: s.url,
+    health: sourceHealth(s, now),
+    lastSuccessAt: s.last_success_at,
+    lastError: s.last_error,
+    pending: pendingBySource.get(s.id) ?? 0,
+  }));
+  const lastRunAt = sources.reduce<string | null>(
+    (max, s) => (s.last_checked_at && (!max || s.last_checked_at > max) ? s.last_checked_at : max),
+    null
+  );
+  const pendingTotal = [...pendingBySource.values()].reduce((a, b) => a + b, 0);
   const newThisWeek = insights.filter((i) => new Date(i.created_at).getTime() >= oneWeekAgo).length;
   const testCandidates = insights.filter((i) => i.yogurtland_fit === "test").length;
 
@@ -135,6 +214,14 @@ export default async function Home() {
             </p>
           )}
         </section>
+
+        {sourceError ? (
+          <p className="mt-10 text-sm text-red-600 dark:text-red-400">
+            수집 상태를 불러오지 못했습니다: {sourceError.message}
+          </p>
+        ) : (
+          <SourceStatus items={sourceItems} lastRunAt={lastRunAt} pendingTotal={pendingTotal} />
+        )}
 
         <details className="mt-10 group">
           <summary className="cursor-pointer list-none text-lg font-semibold text-black marker:content-none dark:text-zinc-50">
