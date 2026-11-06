@@ -47,13 +47,19 @@ async function ensureTabsExist(sheets, existingTitles, neededTitles) {
   });
 }
 
-async function writeTab(sheets, tabName, rows) {
-  await sheets.spreadsheets.values.clear({ spreadsheetId: SHEET_ID, range: `'${tabName}'!A:Z` });
-  await sheets.spreadsheets.values.update({
+// One batchClear + one batchUpdate for all tabs, so write requests stay at 2 no matter how
+// many brands there are (per-tab calls blew through the 60 writes/min Sheets quota).
+async function writeTabs(sheets, tabs) {
+  await sheets.spreadsheets.values.batchClear({
     spreadsheetId: SHEET_ID,
-    range: `'${tabName}'!A1`,
-    valueInputOption: "RAW",
-    requestBody: { values: [HEADER, ...rows] },
+    requestBody: { ranges: tabs.map(([tabName]) => `'${tabName}'!A:Z`) },
+  });
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: SHEET_ID,
+    requestBody: {
+      valueInputOption: "RAW",
+      data: tabs.map(([tabName, rows]) => ({ range: `'${tabName}'!A1`, values: [HEADER, ...rows] })),
+    },
   });
 }
 
@@ -106,10 +112,7 @@ async function main() {
   const neededTabs = [OVERVIEW_TAB, ...byBrand.keys()];
   await ensureTabsExist(sheets, existingTitles, neededTabs);
 
-  await writeTab(sheets, OVERVIEW_TAB, withBrand.map((r) => r.row));
-  for (const [tab, rows] of byBrand) {
-    await writeTab(sheets, tab, rows);
-  }
+  await writeTabs(sheets, [[OVERVIEW_TAB, withBrand.map((r) => r.row)], ...byBrand]);
 
   console.log(`Synced ${withBrand.length} insight row(s) across ${byBrand.size} brand tab(s) + overview.`);
 }
