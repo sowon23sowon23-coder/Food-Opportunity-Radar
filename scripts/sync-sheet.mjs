@@ -47,20 +47,33 @@ async function ensureTabsExist(sheets, existingTitles, neededTitles) {
   });
 }
 
-// One batchClear + one batchUpdate for all tabs, so write requests stay at 2 no matter how
-// many brands there are (per-tab calls blew through the 60 writes/min Sheets quota).
-async function writeTabs(sheets, tabs) {
-  await sheets.spreadsheets.values.batchClear({
+async function writeTab(sheets, tabName, rows) {
+  await sheets.spreadsheets.values.clear({ spreadsheetId: SHEET_ID, range: `'${tabName}'!A:Z` });
+  await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    requestBody: { ranges: tabs.map(([tabName]) => `'${tabName}'!A:Z`) },
+    range: `'${tabName}'!A1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [HEADER, ...rows] },
   });
-  await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId: SHEET_ID,
-    requestBody: {
-      valueInputOption: "RAW",
-      data: tabs.map(([tabName, rows]) => ({ range: `'${tabName}'!A1`, values: [HEADER, ...rows] })),
+}
+
+// Everything lives in the overview tab; a filter on the header row gives a per-brand dropdown.
+// Sheets pins an open-ended filter range to the current grid size, so callers re-apply it
+// once the data outgrows that range.
+function filterAndFreezeRequests(sheetId) {
+  return [
+    {
+      setBasicFilter: {
+        filter: { range: { sheetId, startRowIndex: 0, startColumnIndex: 0, endColumnIndex: HEADER.length } },
+      },
     },
-  });
+    {
+      updateSheetProperties: {
+        properties: { sheetId, gridProperties: { frozenRowCount: 1 } },
+        fields: "gridProperties.frozenRowCount",
+      },
+    },
+  ];
 }
 
 async function main() {
@@ -99,22 +112,34 @@ async function main() {
     ],
   }));
 
-  const byBrand = new Map();
-  for (const { brand, row } of withBrand) {
-    const tab = sanitizeTabName(brand);
-    if (!byBrand.has(tab)) byBrand.set(tab, []);
-    byBrand.get(tab).push(row);
+  let { data: meta } = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+  if (!meta.sheets.some((s) => s.properties.title === OVERVIEW_TAB)) {
+    await ensureTabsExist(sheets, [], [OVERVIEW_TAB]);
+    ({ data: meta } = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID }));
   }
 
-  const { data: meta } = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
-  const existingTitles = meta.sheets.map((s) => s.properties.title);
+  await writeTab(sheets, OVERVIEW_TAB, withBrand.map((r) => r.row));
 
-  const neededTabs = [OVERVIEW_TAB, ...byBrand.keys()];
-  await ensureTabsExist(sheets, existingTitles, neededTabs);
+  // Older versions kept one tab per brand; drop those (matched by brand name only, so
+  // hand-made tabs are left alone) and make sure the overview tab has its brand filter.
+  const brandTabs = new Set(withBrand.map((r) => sanitizeTabName(r.brand)));
+  brandTabs.delete(OVERVIEW_TAB);
+  const overview = meta.sheets.find((s) => s.properties.title === OVERVIEW_TAB);
+  const staleTabs = meta.sheets.filter((s) => brandTabs.has(s.properties.title));
+  const filterEnd = overview.basicFilter?.range?.endRowIndex;
+  const filterCoversData = overview.basicFilter && (filterEnd == null || filterEnd > withBrand.length);
+  const requests = [
+    ...staleTabs.map((s) => ({ deleteSheet: { sheetId: s.properties.sheetId } })),
+    ...(filterCoversData ? [] : filterAndFreezeRequests(overview.properties.sheetId)),
+  ];
+  if (requests.length > 0) {
+    await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests } });
+  }
 
-  await writeTabs(sheets, [[OVERVIEW_TAB, withBrand.map((r) => r.row)], ...byBrand]);
-
-  console.log(`Synced ${withBrand.length} insight row(s) across ${byBrand.size} brand tab(s) + overview.`);
+  console.log(
+    `Synced ${withBrand.length} insight row(s) to "${OVERVIEW_TAB}"` +
+      (staleTabs.length ? `, removed ${staleTabs.length} old brand tab(s).` : ".")
+  );
 }
 
 main();
